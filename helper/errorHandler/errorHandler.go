@@ -1,9 +1,20 @@
 package errorHandler
 
+import "time"
+
 var emptyFunc func() = func() {}
 
 type MaybeError[T any] struct {
-	f func() (val T, cleanup func(), err error)
+	f            func() (val T, cleanup func(), err error)
+	cache        bool
+	hasCache     bool
+	val          *T
+	cleanup      func()
+	err          error
+	retry        bool
+	retryDelay   time.Duration
+	maxRetry     int
+	maxRetryTime time.Duration
 }
 
 func Just[T any](val T) *MaybeError[T] {
@@ -52,6 +63,32 @@ func Lift[T any, K any](f func(T) (K, error)) func(T) *MaybeError[K] {
 	}
 }
 
+func (m *MaybeError[T]) RetryUntilSuccess(maxRetryTime time.Duration, retryDelay time.Duration) *MaybeError[T] {
+	return &MaybeError[T]{
+		f:            m.f,
+		retry:        true,
+		maxRetryTime: maxRetryTime,
+		retryDelay:   retryDelay,
+	}
+}
+
+func (m *MaybeError[T]) Retry(maxRetry int, retryDelay time.Duration) *MaybeError[T] {
+	return &MaybeError[T]{
+		f:          m.f,
+		retry:      true,
+		maxRetry:   maxRetry,
+		retryDelay: retryDelay,
+	}
+}
+
+func (m *MaybeError[T]) Cache() *MaybeError[T] {
+	return &MaybeError[T]{
+		f:        m.f,
+		cache:    true,
+		hasCache: false,
+	}
+}
+
 func (m *MaybeError[T]) Cleanup(cleanupT func(T)) *MaybeError[T] {
 	return &MaybeError[T]{
 		f: func() (T, func(), error) {
@@ -70,7 +107,44 @@ func (m *MaybeError[T]) Cleanup(cleanupT func(T)) *MaybeError[T] {
 }
 
 func (m *MaybeError[T]) Eval() (T, func(), error) {
-	return m.f()
+	if m.hasCache {
+		return *m.val, m.cleanup, m.err
+	}
+	val, cleanup, err := m.f()
+	if err != nil {
+		if m.retry {
+			if m.maxRetry > 0 {
+				for i := 0; i < m.maxRetry; i++ {
+					time.Sleep(m.retryDelay)
+					val, cleanup, err = m.f()
+					if err == nil {
+						break
+					}
+					cleanup()
+					cleanup = emptyFunc
+				}
+			} else if m.maxRetryTime > 0 {
+				maxEndTime := time.Now().Add(m.maxRetryTime)
+				for time.Now().Before(maxEndTime) {
+					time.Sleep(m.retryDelay)
+					val, cleanup, err = m.f()
+					if err == nil {
+						break
+					}
+					cleanup()
+					cleanup = emptyFunc
+				}
+			}
+		} else {
+			cleanup()
+			cleanup = emptyFunc
+		}
+	}
+	if m.cache {
+		m.val, m.cleanup, m.err = &val, cleanup, err
+		m.hasCache = true
+	}
+	return val, cleanup, err
 }
 
 func FlatMap[T any, K any](m *MaybeError[T], f func(T) *MaybeError[K]) *MaybeError[K] {
@@ -82,10 +156,8 @@ func FlatMap[T any, K any](m *MaybeError[T], f func(T) *MaybeError[K]) *MaybeErr
 				return noop, cleanup, err
 			}
 			newVal, newCleanup, newErr := f(val).Eval()
-			return newVal, func() {
-				newCleanup()
-				cleanup()
-			}, newErr
+			cleanup()
+			return newVal, newCleanup, newErr
 		},
 	}
 }
