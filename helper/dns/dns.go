@@ -4,12 +4,11 @@ import (
 	"log"
 	"net"
 	"strconv"
-	"time"
 
 	"github.com/hoquangnam45/pharmacy-common-go/helper/errorHandler"
 )
 
-func ResolveSrvDns(link string, maxRetryTime time.Duration, interval time.Duration) (map[string]bool, error) {
+func ResolveSrvDns(link string) (map[string]bool, error) {
 	return errorHandler.FlatMap2(
 		errorHandler.Just(link),
 		errorHandler.Lift(func(host string) ([]*net.SRV, error) {
@@ -30,7 +29,5 @@ func ResolveSrvDns(link string, maxRetryTime time.Duration, interval time.Durati
 			}
 			return resolvedAddrs, nil
 		}),
-	).
-		RetryUntilSuccess(maxRetryTime, interval).
-		EvalNoCleanup()
+	).EvalNoCleanup()
 }
