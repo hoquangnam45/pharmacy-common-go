@@ -43,7 +43,16 @@ func Empty[T any]() *MaybeError[T] {
 	}
 }
 
-func Transform[T any](f func() (T, error)) *MaybeError[T] {
+func Factory[T any](f func() T) *MaybeError[T] {
+	return &MaybeError[T]{
+		f: func() (T, func(), error) {
+			val := f()
+			return val, emptyFunc, nil
+		},
+	}
+}
+
+func FactoryM[T any](f func() (T, error)) *MaybeError[T] {
 	return &MaybeError[T]{
 		f: func() (T, func(), error) {
 			val, err := f()
@@ -58,6 +67,17 @@ func Lift[T any, K any](f func(T) (K, error)) func(T) *MaybeError[K] {
 			f: func() (K, func(), error) {
 				val, err := f(val)
 				return val, emptyFunc, err
+			},
+		}
+	}
+}
+
+func LiftN[T any](f func(T) error) func(T) *MaybeError[any] {
+	return func(val T) *MaybeError[any] {
+		return &MaybeError[any]{
+			f: func() (any, func(), error) {
+				err := f(val)
+				return nil, emptyFunc, err
 			},
 		}
 	}
@@ -106,12 +126,27 @@ func (m *MaybeError[T]) Cleanup(cleanupT func(T)) *MaybeError[T] {
 	}
 }
 
+func (m *MaybeError[T]) EvalNoCleanup() (T, error) {
+	val, _, err := m.Eval()
+	return val, err
+}
+
+func (m *MaybeError[T]) GetWithHandler(handler func(error)) (T, error) {
+	val, err := m.EvalNoCleanup()
+	if err != nil {
+		handler(err)
+	}
+	return val, err
+}
+
 func (m *MaybeError[T]) Eval() (T, func(), error) {
 	if m.hasCache {
 		return *m.val, m.cleanup, m.err
 	}
 	val, cleanup, err := m.f()
 	if err != nil {
+		cleanup()
+		cleanup = emptyFunc
 		if m.retry {
 			if m.maxRetry > 0 {
 				for i := 0; i < m.maxRetry; i++ {
@@ -135,9 +170,6 @@ func (m *MaybeError[T]) Eval() (T, func(), error) {
 					cleanup = emptyFunc
 				}
 			}
-		} else {
-			cleanup()
-			cleanup = emptyFunc
 		}
 	}
 	if m.cache {
