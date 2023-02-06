@@ -2,14 +2,11 @@ package errorHandler
 
 import "time"
 
-var emptyFunc func() = func() {}
-
 type MaybeError[T any] struct {
-	f            func() (val T, cleanup func(), err error)
+	f            func() (val T, err error)
 	cache        bool
 	hasCache     bool
 	val          *T
-	cleanup      func()
 	err          error
 	retry        bool
 	retryDelay   time.Duration
@@ -19,44 +16,44 @@ type MaybeError[T any] struct {
 
 func Just[T any](val T) *MaybeError[T] {
 	return &MaybeError[T]{
-		f: func() (T, func(), error) {
-			return val, emptyFunc, nil
+		f: func() (T, error) {
+			return val, nil
 		},
 	}
 }
 
 func Error[T any](err error) *MaybeError[T] {
 	return &MaybeError[T]{
-		f: func() (T, func(), error) {
+		f: func() (T, error) {
 			var noop T
-			return noop, emptyFunc, err
+			return noop, err
 		},
 	}
 }
 
 func Empty[T any]() *MaybeError[T] {
 	return &MaybeError[T]{
-		f: func() (T, func(), error) {
+		f: func() (T, error) {
 			var noop T
-			return noop, emptyFunc, nil
+			return noop, nil
 		},
 	}
 }
 
 func Factory[T any](f func() T) *MaybeError[T] {
 	return &MaybeError[T]{
-		f: func() (T, func(), error) {
+		f: func() (T, error) {
 			val := f()
-			return val, emptyFunc, nil
+			return val, nil
 		},
 	}
 }
 
 func FactoryM[T any](f func() (T, error)) *MaybeError[T] {
 	return &MaybeError[T]{
-		f: func() (T, func(), error) {
+		f: func() (T, error) {
 			val, err := f()
-			return val, emptyFunc, err
+			return val, err
 		},
 	}
 }
@@ -64,9 +61,9 @@ func FactoryM[T any](f func() (T, error)) *MaybeError[T] {
 func Lift[T any, K any](f func(T) (K, error)) func(T) *MaybeError[K] {
 	return func(val T) *MaybeError[K] {
 		return &MaybeError[K]{
-			f: func() (K, func(), error) {
+			f: func() (K, error) {
 				val, err := f(val)
-				return val, emptyFunc, err
+				return val, err
 			},
 		}
 	}
@@ -75,9 +72,9 @@ func Lift[T any, K any](f func(T) (K, error)) func(T) *MaybeError[K] {
 func LiftN[T any](f func(T) error) func(T) *MaybeError[any] {
 	return func(val T) *MaybeError[any] {
 		return &MaybeError[any]{
-			f: func() (any, func(), error) {
+			f: func() (any, error) {
 				err := f(val)
-				return nil, emptyFunc, err
+				return nil, err
 			},
 		}
 	}
@@ -109,87 +106,56 @@ func (m *MaybeError[T]) Cache() *MaybeError[T] {
 	}
 }
 
-func (m *MaybeError[T]) Cleanup(cleanupT func(T)) *MaybeError[T] {
-	return &MaybeError[T]{
-		f: func() (T, func(), error) {
-			val, cleanup, err := m.Eval()
-			if err == nil {
-				return val, func() {
-					cleanupT(val)
-					cleanup()
-				}, err
-			}
-			return val, func() {
-				cleanup()
-			}, err
-		},
-	}
-}
-
-func (m *MaybeError[T]) EvalNoCleanup() (T, error) {
-	val, _, err := m.Eval()
-	return val, err
-}
-
-func (m *MaybeError[T]) GetWithHandler(handler func(error)) (T, error) {
-	val, err := m.EvalNoCleanup()
+func (m *MaybeError[T]) EvalWithHandler(handler func(error)) (T, error) {
+	val, err := m.Eval()
 	if err != nil {
 		handler(err)
 	}
 	return val, err
 }
 
-func (m *MaybeError[T]) Eval() (T, func(), error) {
+func (m *MaybeError[T]) Eval() (T, error) {
 	if m.hasCache {
-		return *m.val, m.cleanup, m.err
+		return *m.val, m.err
 	}
-	val, cleanup, err := m.f()
-	if err != nil {
-		cleanup()
-		cleanup = emptyFunc
-		if m.retry {
-			if m.maxRetry > 0 {
-				for i := 0; i < m.maxRetry; i++ {
-					time.Sleep(m.retryDelay)
-					val, cleanup, err = m.f()
-					if err == nil {
-						break
-					}
-					cleanup()
-					cleanup = emptyFunc
+	val, err := m.f()
+	if err != nil && m.retry {
+		if m.maxRetry > 0 {
+			for i := 0; i < m.maxRetry; i++ {
+				time.Sleep(m.retryDelay)
+				val, err = m.f()
+				if err == nil {
+					break
 				}
-			} else if m.maxRetryTime > 0 {
-				maxEndTime := time.Now().Add(m.maxRetryTime)
-				for time.Now().Before(maxEndTime) {
-					time.Sleep(m.retryDelay)
-					val, cleanup, err = m.f()
-					if err == nil {
-						break
-					}
-					cleanup()
-					cleanup = emptyFunc
+			}
+		} else if m.maxRetryTime > 0 {
+			maxEndTime := time.Now().Add(m.maxRetryTime)
+			for time.Now().Before(maxEndTime) {
+				time.Sleep(m.retryDelay)
+				val, err = m.f()
+				if err == nil {
+					break
 				}
 			}
 		}
 	}
 	if m.cache {
-		m.val, m.cleanup, m.err = &val, cleanup, err
+		m.val, m.err = &val, err
 		m.hasCache = true
 	}
-	return val, cleanup, err
+	return val, err
 }
 
 func FlatMap[T any, K any](m *MaybeError[T], f func(T) *MaybeError[K]) *MaybeError[K] {
 	return &MaybeError[K]{
-		f: func() (K, func(), error) {
-			val, cleanup, err := m.Eval()
+		f: func() (K, error) {
+			val, err := m.Eval()
 			var noop K
 			if err != nil {
-				return noop, cleanup, err
+				return noop, err
 			}
-			newVal, newCleanup, newErr := f(val).Eval()
-			cleanup()
-			return newVal, newCleanup, newErr
+			newVal, newErr := f(val).Eval()
+			return newVal, newErr
 		},
 	}
 }

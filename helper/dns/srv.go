@@ -5,13 +5,13 @@ import (
 	"net"
 	"strconv"
 
-	"github.com/hoquangnam45/pharmacy-common-go/helper/errorHandler"
+	handler "github.com/hoquangnam45/pharmacy-common-go/helper/errorHandler"
 )
 
 func ResolveSrvDns(link string) (map[string]bool, error) {
-	return errorHandler.FlatMap2(
-		errorHandler.Just(link),
-		errorHandler.Lift(func(host string) ([]*net.SRV, error) {
+	return handler.FlatMap2(
+		handler.Just(link),
+		handler.Lift(func(host string) ([]*net.SRV, error) {
 			log.Printf("Start lookingup host %s", host)
 			_, addrs, err := net.LookupSRV("", "", host)
 			if err != nil {
@@ -19,7 +19,7 @@ func ResolveSrvDns(link string) (map[string]bool, error) {
 			}
 			return addrs, nil
 		}),
-		errorHandler.Lift(func(addrs []*net.SRV) (map[string]bool, error) {
+		handler.Lift(func(addrs []*net.SRV) (map[string]bool, error) {
 			resolvedAddrs := map[string]bool{}
 			log.Printf("Found %d records: ", len(addrs))
 			for _, v := range addrs {
@@ -29,5 +29,5 @@ func ResolveSrvDns(link string) (map[string]bool, error) {
 			}
 			return resolvedAddrs, nil
 		}),
-	).EvalNoCleanup()
+	).Eval()
 }

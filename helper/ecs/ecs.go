@@ -7,7 +7,7 @@ import (
 	"os"
 	"strings"
 
-	"github.com/hoquangnam45/pharmacy-common-go/helper/errorHandler"
+	handler "github.com/hoquangnam45/pharmacy-common-go/helper/errorHandler"
 )
 
 type ContainerInfo struct {
@@ -16,13 +16,13 @@ type ContainerInfo struct {
 }
 
 func GetContainerInfo(ecsMetadataPath string) (*ContainerInfo, error) {
-	return errorHandler.FlatMap2(
-		errorHandler.Just(ecsMetadataPath),
-		errorHandler.Lift(GetEcsMetadata),
-		errorHandler.Lift(func(metadata map[string]any) (*ContainerInfo, error) {
+	return handler.FlatMap2(
+		handler.Just(ecsMetadataPath),
+		handler.Lift(GetEcsMetadata),
+		handler.Lift(func(metadata map[string]any) (*ContainerInfo, error) {
 			return GetContainerInfoFromMetadata(metadata)
 		}),
-	).EvalNoCleanup()
+	).Eval()
 }
 
 func GetContainerInfoFromMetadata(metadata map[string]any) (*ContainerInfo, error) {
@@ -45,17 +45,19 @@ func GetContainerInfoFromMetadata(metadata map[string]any) (*ContainerInfo, erro
 }
 
 func GetEcsMetadata(path string) (map[string]any, error) {
-	return errorHandler.FlatMap3(
-		errorHandler.Just(path),
-		errorHandler.Lift(os.Open),
-		errorHandler.Lift(func(file *os.File) ([]byte, error) {
+	return handler.FlatMap3(
+		handler.Just(path),
+		handler.Lift(os.Open),
+		handler.Lift(func(file *os.File) ([]byte, error) {
 			defer file.Close()
 			return io.ReadAll(file)
 		}),
-		errorHandler.Lift(func(bytes []byte) (map[string]any, error) {
+		handler.Lift(func(bytes []byte) (map[string]any, error) {
 			var ret map[string]any
 			err := json.Unmarshal(bytes, &ret)
 			return ret, err
 		}),
-	).EvalNoCleanup()
+	).Eval()
 }
+
+

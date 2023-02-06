@@ -2,7 +2,7 @@ package consul
 
 import (
 	"github.com/hashicorp/consul/api"
-	"github.com/hoquangnam45/pharmacy-common-go/helper/errorHandler"
+	handler "github.com/hoquangnam45/pharmacy-common-go/helper/errorHandler"
 )
 
 type ConsulClient struct {
@@ -12,15 +12,15 @@ type ConsulClient struct {
 func NewClient(addr string) (*ConsulClient, error) {
 	config := api.DefaultConfig()
 	config.Address = addr
-	return errorHandler.FlatMap2(
-		errorHandler.Just(config),
-		errorHandler.Lift(api.NewClient),
-		func(client *api.Client) *errorHandler.MaybeError[*ConsulClient] {
-			return errorHandler.Just(&ConsulClient{
+	return handler.FlatMap2(
+		handler.Just(config),
+		handler.Lift(api.NewClient),
+		func(client *api.Client) *handler.MaybeError[*ConsulClient] {
+			return handler.Just(&ConsulClient{
 				client,
 			})
 		},
-	).EvalNoCleanup()
+	).Eval()
 }
 
 func (c *ConsulClient) Register(id string, healthCheckPath string) error {
