@@ -6,7 +6,7 @@ type MaybeError[T any] struct {
 	f            func() (val T, err error)
 	cache        bool
 	hasCache     bool
-	val          *T
+	val          T
 	err          error
 	retry        bool
 	retryDelay   time.Duration
@@ -69,6 +69,16 @@ func Lift[T any, K any](f func(T) (K, error)) func(T) *MaybeError[K] {
 	}
 }
 
+func LiftJ[T any, K any](f func(T) K) func(T) *MaybeError[K] {
+	return func(val T) *MaybeError[K] {
+		return &MaybeError[K]{
+			f: func() (K, error) {
+				return f(val), nil
+			},
+		}
+	}
+}
+
 func LiftN[T any](f func(T) error) func(T) *MaybeError[any] {
 	return func(val T) *MaybeError[any] {
 		return &MaybeError[any]{
@@ -106,6 +116,22 @@ func (m *MaybeError[T]) Cache() *MaybeError[T] {
 	}
 }
 
+func (m *MaybeError[T]) DefaultEval(defaultValue T) T {
+	val, err := m.Eval()
+	if err != nil {
+		return defaultValue
+	}
+	return val
+}
+
+func (m *MaybeError[T]) PanicEval() T {
+	val, err := m.Eval()
+	if err != nil {
+		panic(err)
+	}
+	return val
+}
+
 func (m *MaybeError[T]) EvalWithHandler(handler func(error)) (T, error) {
 	val, err := m.Eval()
 	if err != nil {
@@ -114,9 +140,27 @@ func (m *MaybeError[T]) EvalWithHandler(handler func(error)) (T, error) {
 	return val, err
 }
 
+func (m *MaybeError[T]) GoEval(retCh chan<- T, errorCh chan<- error) {
+	val, err := m.Eval()
+	if err != nil {
+		errorCh <- err
+	} else {
+		retCh <- val
+	}
+	close(errorCh)
+	close(retCh)
+}
+
+func (m *MaybeError[T]) EvalWithCh() (<-chan T, <-chan error) {
+	out := make(chan T, 1)
+	errs := make(chan error, 1)
+	go m.GoEval(out, errs)
+	return out, errs
+}
+
 func (m *MaybeError[T]) Eval() (T, error) {
 	if m.hasCache {
-		return *m.val, m.err
+		return m.val, m.err
 	}
 	val, err := m.f()
 	if err != nil && m.retry {
@@ -140,10 +184,27 @@ func (m *MaybeError[T]) Eval() (T, error) {
 		}
 	}
 	if m.cache {
-		m.val, m.err = &val, err
+		m.val, m.err = val, err
 		m.hasCache = true
 	}
 	return val, err
+}
+
+func Peek[T any](f func(T)) func(T) *MaybeError[T] {
+	return func(val T) *MaybeError[T] {
+		f(val)
+		return Just(val)
+	}
+}
+
+func PeekE[T any](f func(T) error) func(T) *MaybeError[T] {
+	return func(val T) *MaybeError[T] {
+		err := f(val)
+		if err != nil {
+			return Error[T](err)
+		}
+		return Just(val)
+	}
 }
 
 func FlatMap[T any, K any](m *MaybeError[T], f func(T) *MaybeError[K]) *MaybeError[K] {

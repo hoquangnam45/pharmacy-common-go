@@ -31,12 +31,15 @@ func GetContainerInfoFromMetadata(metadata map[string]any) (*ContainerInfo, erro
 			containerInfo := &ContainerInfo{}
 			containerInfo.HostIp = metadata["HostPrivateIPv4Address"].(string)
 			containerInfo.PortMappings = map[int]int{}
-			portMappings := metadata["PortMappings"].([]interface{})
-			for _, v := range portMappings {
-				portMapping, _ := v.(map[string]any)
-				containerPort := int(portMapping["ContainerPort"].(float64))
-				hostPort := int(portMapping["HostPort"].(float64))
-				containerInfo.PortMappings[containerPort] = hostPort
+			// Ecs service host network mode check
+			if metadata["PortMappings"] != nil {
+				portMappings := metadata["PortMappings"].([]interface{})
+				for _, v := range portMappings {
+					portMapping, _ := v.(map[string]any)
+					containerPort := int(portMapping["ContainerPort"].(float64))
+					hostPort := int(portMapping["HostPort"].(float64))
+					containerInfo.PortMappings[containerPort] = hostPort
+				}
 			}
 			return containerInfo, nil
 		}
@@ -59,5 +62,3 @@ func GetEcsMetadata(path string) (map[string]any, error) {
 		}),
 	).Eval()
 }
-
-

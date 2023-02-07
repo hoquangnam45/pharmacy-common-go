@@ -1,4 +1,4 @@
-package common
+package util
 
 import (
 	"encoding/json"
@@ -23,4 +23,8 @@ func UnmarshalBytesToMap(byteValue []byte) (map[string]any, error) {
 
 func FatalLog(err error) {
 	log.Fatal(err)
+}
+
+func Panic(err error) {
+	panic(err)
 }
