@@ -8,7 +8,7 @@ import (
 	_ "github.com/lib/pq"
 )
 
-func MigratePostgres(postgresHost, username, password, databaseName string, port int, migrationFilePath string) error {
+func MigratePostgres(postgresHost, username, password, databaseName string, port int, migrationFilePath string, migrateVersion int) error {
 	db, err := db.OpenPostgresDb(postgresHost, username, password, databaseName, port)
 	if err != nil {
 		return err
@@ -25,9 +25,14 @@ func MigratePostgres(postgresHost, username, password, databaseName string, port
 	}
 	defer mi.Close()
 
-	err = mi.Up()
+	err = mi.Migrate(uint(migrateVersion))
 	if err == migrate.ErrNoChange {
 		return nil
+	}
+	if migrateVersion > 1 {
+		if err := mi.Migrate(uint(migrateVersion - 1)); err != nil {
+			panic(err)
+		}
 	}
 	return err
 }

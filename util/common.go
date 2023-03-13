@@ -3,7 +3,6 @@ package util
 import (
 	"encoding/json"
 	"io"
-	"log"
 	"os"
 )
 
@@ -22,9 +21,14 @@ func UnmarshalBytesToMap(byteValue []byte) (map[string]any, error) {
 }
 
 func FatalLog(err error) {
-	log.Fatal(err)
+	Logger.Panic(err.Error())
 }
 
 func Panic(err error) {
 	panic(err)
+}
+
+func ReadAllThenClose(r io.ReadCloser) ([]byte, error) {
+	defer r.Close()
+	return io.ReadAll(r)
 }

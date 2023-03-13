@@ -1,13 +1,13 @@
 package ecs
 
 import (
-	"encoding/json"
 	"errors"
 	"io"
 	"os"
 	"strings"
 
 	handler "github.com/hoquangnam45/pharmacy-common-go/helper/errorHandler"
+	"github.com/hoquangnam45/pharmacy-common-go/util"
 )
 
 type ContainerInfo struct {
@@ -55,10 +55,6 @@ func GetEcsMetadata(path string) (map[string]any, error) {
 			defer file.Close()
 			return io.ReadAll(file)
 		}),
-		handler.Lift(func(bytes []byte) (map[string]any, error) {
-			var ret map[string]any
-			err := json.Unmarshal(bytes, &ret)
-			return ret, err
-		}),
+		handler.Lift(util.UnmarshalJson(map[string]any{})),
 	).Eval()
 }
