@@ -6,94 +6,99 @@ import (
 	"time"
 
 	"github.com/hashicorp/consul/api"
-	"github.com/hoquangnam45/pharmacy-common-go/helper/errorHandler"
 	"github.com/hoquangnam45/pharmacy-common-go/microservice/lb"
+	"github.com/hoquangnam45/pharmacy-common-go/util"
+	h "github.com/hoquangnam45/pharmacy-common-go/util/errorHandler"
 )
 
-type ConsulClient struct {
-	consulUrlsRefresher func() (map[string]bool, error)
+type Client struct {
 	client              *api.Client
 	config              api.Config
 	consulUrlLb         *lb.RandomLB[string]
 	serviceUrlLbs       map[string]*lb.RoundRobinLB[string]
+	RegisteredAddr      string
+	serviceRegistration *api.AgentServiceRegistration
 }
 
-func NewClient(config api.Config, consulUrlsRefresher func() (map[string]bool, error)) *ConsulClient {
-	return &ConsulClient{
-		consulUrlsRefresher: consulUrlsRefresher,
-		config:              config,
-		consulUrlLb:         lb.NewRandomLB[string](),
-		serviceUrlLbs:       map[string]*lb.RoundRobinLB[string]{},
+func NewClient(config api.Config, consulUrlFetcher lb.ElementFetcher[string], ttl time.Duration) *Client {
+	return &Client{
+		config:        config,
+		consulUrlLb:   lb.NewRandomLB(consulUrlFetcher, ttl),
+		serviceUrlLbs: map[string]*lb.RoundRobinLB[string]{},
 	}
 }
 
-func (c *ConsulClient) RefreshServiceUrls(serviceName string) (map[string]bool, error) {
-	return errorHandler.FlatMap(
-		errorHandler.FactoryM(func() ([]*api.CatalogService, error) {
-			services, _, err := c.client.Catalog().Service(serviceName, "", nil)
+func (c *Client) RefreshServiceUrls(serviceName string) func() (map[string]bool, error) {
+	return h.FlatMap(
+		h.FactoryM(func() ([]*api.ServiceEntry, error) {
+			services, _, err := c.client.Health().Service(serviceName, "", true, nil)
 			return services, err
 		}),
-		errorHandler.Lift(func(services []*api.CatalogService) (map[string]bool, error) {
+		h.Lift(func(services []*api.ServiceEntry) (map[string]bool, error) {
 			m := map[string]bool{}
 			for _, v := range services {
-				address := v.ServiceAddress + ":" + strconv.Itoa(v.ServicePort)
+				address := v.Service.Address + ":" + strconv.Itoa(v.Service.Port)
 				m[address] = true
 			}
 			return m, nil
 		}),
-	).Eval()
+	).Unwrap()
 }
 
-func (c *ConsulClient) Register(serviceRegistration *api.AgentServiceRegistration) error {
+func (c *Client) ConnectToConsul() error {
 	loadbalancer := c.consulUrlLb
-	err := loadbalancer.Check()
-	if err == lb.ErrorEmptyList || err == lb.ErrorNeedRefresh {
-		_, err = errorHandler.FlatMap(
-			errorHandler.FactoryM(c.consulUrlsRefresher),
-			errorHandler.PeekE(func(consulUrls map[string]bool) error {
-				loadbalancer.RefreshList(consulUrls, time.Minute)
-				return loadbalancer.Check()
-			})).Eval()
-	}
+	err := loadbalancer.CheckRefresh()
 	if err != nil {
 		return err
 	}
 
-	for consulAddr, err := loadbalancer.Get(); err == nil; consulAddr, err = loadbalancer.Get() {
+	for consulAddr, err := loadbalancer.LoadBalancing(); err == nil; consulAddr, err = loadbalancer.LoadBalancing() {
 		config := c.config
 		config.Address = consulAddr
-		client, err_ := errorHandler.FlatMap(
-			errorHandler.Lift(api.NewClient)(&config),
-			errorHandler.PeekE(func(client *api.Client) error {
-				return client.Agent().ServiceRegister(serviceRegistration)
-			})).Eval()
-		if err_ != nil {
-			loadbalancer.Remove(config.Address)
+		client, err := api.NewClient(&config)
+		if err != nil {
+			util.SugaredLogger.Infof("Can't initialize consul client at %s. Error %s\n", consulAddr, err.Error())
+			util.SugaredLogger.Infof("Delete %s from load balancer", consulAddr)
+			loadbalancer.Remove(consulAddr)
 			continue
 		}
-		c.client = client
-		return nil
+		if err := c.checkConsulConnection(client); err != nil {
+			util.SugaredLogger.Infof("Can't register to consul at %s. Error %s\n", consulAddr, err.Error())
+			util.SugaredLogger.Infof("Delete %s from load balancer", consulAddr)
+			loadbalancer.Remove(consulAddr)
+			continue
+		} else {
+			c.RegisteredAddr = consulAddr
+			c.client = client
+			return nil
+		}
 	}
-	return errors.New("can't register with any consul urls")
+	return errors.New("can't connect to any consul agent")
 }
 
-func (c *ConsulClient) LoadBalancing(serviceName string) (string, error) {
+func (c *Client) RegisterService(serviceRegistration *api.AgentServiceRegistration) error {
+	if c.serviceRegistration == nil {
+		c.serviceRegistration = serviceRegistration
+	}
+	return c.client.Agent().ServiceRegister(serviceRegistration)
+}
+
+func (c *Client) LoadBalancing(serviceName string) (string, error) {
 	loadbalancer, ok := c.serviceUrlLbs[serviceName]
 	if !ok {
-		c.serviceUrlLbs[serviceName] = lb.NewRoundRobinLB[string]()
-		loadbalancer = c.serviceUrlLbs[serviceName]
-	}
-	err := loadbalancer.Check()
-	if err == lb.ErrorEmptyList || err == lb.ErrorNeedRefresh {
-		_, err = errorHandler.FlatMap(
-			errorHandler.Lift(c.RefreshServiceUrls)(serviceName),
-			errorHandler.PeekE(func(serviceUrls map[string]bool) error {
-				loadbalancer.RefreshList(serviceUrls, time.Minute)
-				return loadbalancer.Check()
-			})).Eval()
-	}
-	if err != nil {
-		return "", err
+		loadbalancer = lb.NewRoundRobinLB(c.RefreshServiceUrls(serviceName), time.Minute)
+		c.serviceUrlLbs[serviceName] = loadbalancer
 	}
 	return loadbalancer.Get()
+}
+
+func (c *Client) CheckConsulConnection() error {
+	return c.checkConsulConnection(c.client)
+}
+
+func (c *Client) checkConsulConnection(client *api.Client) error {
+	if _, err := client.Status().Peers(); err != nil {
+		return err
+	}
+	return nil
 }

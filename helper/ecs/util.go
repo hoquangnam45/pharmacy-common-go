@@ -1,11 +1,12 @@
 package ecs
 
 import (
+	"context"
 	"errors"
 	"strings"
 
-	"github.com/hoquangnam45/pharmacy-common-go/helper/dns"
-	h "github.com/hoquangnam45/pharmacy-common-go/helper/errorHandler"
+	"github.com/hoquangnam45/pharmacy-common-go/util/dns"
+	h "github.com/hoquangnam45/pharmacy-common-go/util/errorHandler"
 )
 
 func GetAdvertiseIp(ecsMetadataPath string) (string, error) {
@@ -33,14 +34,16 @@ func GetAdvertisePort(ecsMetadataPath string, containerPort int) (int, error) {
 	return 0, errors.New("missing ecs metadata path")
 }
 
-func ResolveHostModeService(srvUrl string) (map[string]bool, error) {
+func ResolveHostModeService(ctx context.Context, srvUrl string) (map[string]bool, error) {
 	return h.FlatMap(
-		h.Lift(dns.ResolveSrvDns)(srvUrl),
+		h.FactoryM(func() (map[string]bool, error) {
+			return dns.ResolveSrvDns(ctx, srvUrl)
+		}),
 		h.Lift(func(m map[string]bool) (map[string]bool, error) {
 			newMap := map[string]bool{}
 			for k := range m {
 				parts := strings.Split(k, ":")
-				resolvedAddrs, err := dns.ResolveADns(parts[0])
+				resolvedAddrs, err := dns.ResolveADns(ctx, parts[0])
 				if err != nil {
 					return nil, err
 				}

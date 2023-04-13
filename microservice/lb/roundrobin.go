@@ -1,31 +1,31 @@
 package lb
 
+import (
+	"time"
+)
+
 type RoundRobinLB[T comparable] struct {
 	*baseLB[T]
 	idx int
+	LoadBalancer[T]
 }
 
-func NewRoundRobinLB[T comparable]() *RoundRobinLB[T] {
+func NewRoundRobinLB[T comparable](elementFetcher ElementFetcher[T], ttl time.Duration) *RoundRobinLB[T] {
 	return &RoundRobinLB[T]{
-		baseLB: &baseLB[T]{},
+		baseLB: NewBaseLb(elementFetcher, ttl),
 	}
+}
+
+func (l *RoundRobinLB[T]) LoadBalancing() T {
+	ret := l.elements[l.idx]
+	l.idx = (l.idx + 1) % len(l.elements)
+	return ret
 }
 
 func (l *RoundRobinLB[T]) Get() (T, error) {
-	err := l.Check()
 	var noop T
-	if err != nil {
+	if err := l.CheckRefresh(); err != nil {
 		return noop, err
 	}
-	ret := l.elements[l.idx]
-	l.idx = (l.idx + 1) % len(l.elements)
-	return ret, nil
-}
-
-func (l *RoundRobinLB[T]) Remove(val T) {
-	if idx, ok := l.baseLB.Remove(val); ok {
-		if l.idx > idx {
-			l.idx -= 1
-		}
-	}
+	return l.LoadBalancing(), nil
 }

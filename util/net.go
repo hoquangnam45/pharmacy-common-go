@@ -1,10 +1,8 @@
-package net
+package util
 
 import (
 	"errors"
 	"net"
-
-	"github.com/hoquangnam45/pharmacy-common-go/util"
 )
 
 func FindBindInterfaceAddress(bindInterface string) (string, error) {
@@ -34,7 +32,7 @@ func FindBindInterfaceAddress(bindInterface string) (string, error) {
 	return "", errors.New("not found bind interface address")
 }
 
-func FindFirstNonLoopBackAddr() (*util.Pair[string, string], error) {
+func FindFirstNonLoopBackAddr() (*Pair[string, string], error) {
 	interfaces, err := net.Interfaces()
 	if err != nil {
 		return nil, err
@@ -48,7 +46,7 @@ func FindFirstNonLoopBackAddr() (*util.Pair[string, string], error) {
 		for _, address := range addrs {
 			if ipnet, ok := address.(*net.IPNet); ok && !ipnet.IP.IsLoopback() {
 				if ipnet.IP.To4() != nil {
-					return util.NewPair(ipnet.IP.To4().String(), interf.Name), nil
+					return NewPair(ipnet.IP.To4().String(), interf.Name), nil
 				}
 			}
 		}

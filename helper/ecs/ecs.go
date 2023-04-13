@@ -1,13 +1,12 @@
 package ecs
 
 import (
-	"encoding/json"
 	"errors"
-	"io"
 	"os"
 	"strings"
 
-	handler "github.com/hoquangnam45/pharmacy-common-go/helper/errorHandler"
+	"github.com/hoquangnam45/pharmacy-common-go/util"
+	h "github.com/hoquangnam45/pharmacy-common-go/util/errorHandler"
 )
 
 type ContainerInfo struct {
@@ -16,12 +15,9 @@ type ContainerInfo struct {
 }
 
 func GetContainerInfo(ecsMetadataPath string) (*ContainerInfo, error) {
-	return handler.FlatMap2(
-		handler.Just(ecsMetadataPath),
-		handler.Lift(GetEcsMetadata),
-		handler.Lift(func(metadata map[string]any) (*ContainerInfo, error) {
-			return GetContainerInfoFromMetadata(metadata)
-		}),
+	return h.FlatMap(
+		h.Lift(GetEcsMetadata)(ecsMetadataPath),
+		h.Lift(GetContainerInfoFromMetadata),
 	).Eval()
 }
 
@@ -48,17 +44,9 @@ func GetContainerInfoFromMetadata(metadata map[string]any) (*ContainerInfo, erro
 }
 
 func GetEcsMetadata(path string) (map[string]any, error) {
-	return handler.FlatMap3(
-		handler.Just(path),
-		handler.Lift(os.Open),
-		handler.Lift(func(file *os.File) ([]byte, error) {
-			defer file.Close()
-			return io.ReadAll(file)
-		}),
-		handler.Lift(func(bytes []byte) (map[string]any, error) {
-			var ret map[string]any
-			err := json.Unmarshal(bytes, &ret)
-			return ret, err
-		}),
+	return h.FlatMap2(
+		h.Lift(os.Open)(path),
+		h.Lift(util.ReadAllThenClose[*os.File]),
+		h.Lift(util.UnmarshalJsonDeref(&map[string]any{})),
 	).Eval()
 }
