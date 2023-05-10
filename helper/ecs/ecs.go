@@ -14,14 +14,14 @@ type ContainerInfo struct {
 	PortMappings map[int]int
 }
 
-func GetContainerInfo(ecsMetadataPath string) (*ContainerInfo, error) {
+func (e *Ecs) GetContainerInfo(ecsMetadataPath string) (*ContainerInfo, error) {
 	return h.FlatMap(
-		h.Lift(GetEcsMetadata)(ecsMetadataPath),
-		h.Lift(GetContainerInfoFromMetadata),
+		h.Lift(e.GetEcsMetadata)(ecsMetadataPath),
+		h.Lift(e.GetContainerInfoFromMetadata),
 	).Eval()
 }
 
-func GetContainerInfoFromMetadata(metadata map[string]any) (*ContainerInfo, error) {
+func (e *Ecs) GetContainerInfoFromMetadata(metadata map[string]any) (*ContainerInfo, error) {
 	if status, ok := metadata["MetadataFileStatus"].(string); ok {
 		if strings.ToLower(status) == "ready" {
 			containerInfo := &ContainerInfo{}
@@ -43,7 +43,7 @@ func GetContainerInfoFromMetadata(metadata map[string]any) (*ContainerInfo, erro
 	return nil, errors.New("metadata file not ready or path is wrong")
 }
 
-func GetEcsMetadata(path string) (map[string]any, error) {
+func (e *Ecs) GetEcsMetadata(path string) (map[string]any, error) {
 	return h.FlatMap2(
 		h.Lift(os.Open)(path),
 		h.Lift(util.ReadAllThenClose[*os.File]),

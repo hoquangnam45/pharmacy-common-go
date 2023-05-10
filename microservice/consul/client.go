@@ -1,51 +1,45 @@
 package consul
 
 import (
+	"context"
 	"errors"
-	"strconv"
-	"time"
+	"fmt"
 
+	"github.com/go-kratos/kratos/v2/transport/http"
 	"github.com/hashicorp/consul/api"
+	"github.com/hoquangnam45/pharmacy-common-go/microservice"
+	"github.com/hoquangnam45/pharmacy-common-go/microservice/discovery"
 	"github.com/hoquangnam45/pharmacy-common-go/microservice/lb"
-	"github.com/hoquangnam45/pharmacy-common-go/util"
 	h "github.com/hoquangnam45/pharmacy-common-go/util/errorHandler"
+	"github.com/hoquangnam45/pharmacy-common-go/util/log"
 )
 
 type Client struct {
-	client              *api.Client
-	config              api.Config
-	consulUrlLb         *lb.RandomLB[string]
-	serviceUrlLbs       map[string]*lb.RoundRobinLB[string]
-	RegisteredAddr      string
-	serviceRegistration *api.AgentServiceRegistration
+	client      *api.Client
+	consulUrlLb lb.LoadBalancer[string]
+	discovery.Discovery
+	*KVClient
+	logger            log.Logger
+	clients           map[string]*http.Client
+	serviceNameMapper microservice.ServiceNameMapper
 }
 
-func NewClient(config api.Config, consulUrlFetcher lb.ElementFetcher[string], ttl time.Duration) *Client {
+func NewClient(lb lb.LoadBalancer[string], logger log.Logger) *Client {
 	return &Client{
-		config:        config,
-		consulUrlLb:   lb.NewRandomLB(consulUrlFetcher, ttl),
-		serviceUrlLbs: map[string]*lb.RoundRobinLB[string]{},
+		consulUrlLb: lb,
+		logger:      logger,
 	}
 }
 
-func (c *Client) RefreshServiceUrls(serviceName string) func() (map[string]bool, error) {
-	return h.FlatMap(
-		h.FactoryM(func() ([]*api.ServiceEntry, error) {
-			services, _, err := c.client.Health().Service(serviceName, "", true, nil)
-			return services, err
-		}),
-		h.Lift(func(services []*api.ServiceEntry) (map[string]bool, error) {
-			m := map[string]bool{}
-			for _, v := range services {
-				address := v.Service.Address + ":" + strconv.Itoa(v.Service.Port)
-				m[address] = true
-			}
-			return m, nil
-		}),
-	).Unwrap()
+func WrapBaseClient(c *api.Client) *Client {
+	return &Client{
+		client:    c,
+		Discovery: discovery.NewDiscovery(c),
+		KVClient:  NewKvClient(c),
+	}
 }
 
-func (c *Client) ConnectToConsul() error {
+func (c *Client) ConnectToConsul(config *api.Config) error {
 	loadbalancer := c.consulUrlLb
 	err := loadbalancer.CheckRefresh()
 	if err != nil {
@@ -53,23 +47,24 @@ func (c *Client) ConnectToConsul() error {
 	}
 
 	for consulAddr, err := loadbalancer.LoadBalancing(); err == nil; consulAddr, err = loadbalancer.LoadBalancing() {
-		config := c.config
+		config := *config
 		config.Address = consulAddr
 		client, err := api.NewClient(&config)
 		if err != nil {
-			util.SugaredLogger.Infof("Can't initialize consul client at %s. Error %s\n", consulAddr, err.Error())
-			util.SugaredLogger.Infof("Delete %s from load balancer", consulAddr)
+			c.logger.Info("Can't initialize consul client at %s. Error %s\n", consulAddr, err.Error())
+			c.logger.Info("Delete %s from load balancer", consulAddr)
 			loadbalancer.Remove(consulAddr)
 			continue
 		}
 		if err := c.checkConsulConnection(client); err != nil {
-			util.SugaredLogger.Infof("Can't register to consul at %s. Error %s\n", consulAddr, err.Error())
-			util.SugaredLogger.Infof("Delete %s from load balancer", consulAddr)
+			c.logger.Info("Can't register to consul at %s. Error %s\n", consulAddr, err.Error())
+			c.logger.Info("Delete %s from load balancer", consulAddr)
 			loadbalancer.Remove(consulAddr)
 			continue
 		} else {
-			c.RegisteredAddr = consulAddr
 			c.client = client
+			c.KVClient = NewKvClient(client)
+			c.Discovery = discovery.NewDiscovery(c.client)
 			return nil
 		}
 	}
@@ -77,19 +72,7 @@ func (c *Client) ConnectToConsul() error {
 }
 
 func (c *Client) RegisterService(serviceRegistration *api.AgentServiceRegistration) error {
-	if c.serviceRegistration == nil {
-		c.serviceRegistration = serviceRegistration
-	}
 	return c.client.Agent().ServiceRegister(serviceRegistration)
-}
-
-func (c *Client) LoadBalancing(serviceName string) (string, error) {
-	loadbalancer, ok := c.serviceUrlLbs[serviceName]
-	if !ok {
-		loadbalancer = lb.NewRoundRobinLB(c.RefreshServiceUrls(serviceName), time.Minute)
-		c.serviceUrlLbs[serviceName] = loadbalancer
-	}
-	return loadbalancer.Get()
 }
 
 func (c *Client) CheckConsulConnection() error {
@@ -102,3 +85,65 @@ func (c *Client) checkConsulConnection(client *api.Client) error {
 	}
 	return nil
 }
+
+func (c *Client) CallService(ctx context.Context, serviceType string, method string, path string, args interface{}, reply interface{}) error {
+	return h.FlatMap(
+		h.Lift(c.serviceNameMapper.GetServiceName)(serviceType),
+		h.LiftE(func(serviceName string) error {
+			client, ok := c.clients[serviceName]
+			if !ok {
+				clientI, err := http.NewClient(context.Background(),
+					http.WithEndpoint(fmt.Sprintf("discovery:///%s", serviceName)),
+					http.WithDiscovery(c.Discovery))
+				if err != nil {
+					return err
+				}
+				client = clientI
+				c.clients[serviceName] = client
+			}
+			return client.Invoke(ctx, method, path, args, reply)
+		}),
+	).Error()
+}
+
+// func (c *Client) RefreshServiceUrls(serviceName string) func() (map[string]bool, error) {
+// 	return h.FlatMap(
+// 		h.FactoryM(func() ([]*api.ServiceEntry, error) {
+// 			services, _, err := c.client.Health().Service(serviceName, "", true, nil)
+// 			return services, err
+// 		}),
+// 		h.Lift(func(services []*api.ServiceEntry) (map[string]bool, error) {
+// 			m := map[string]bool{}
+// 			for _, v := range services {
+// 				address := v.Service.Address + ":" + strconv.Itoa(v.Service.Port)
+// 				m[address] = true
+// 			}
+// 			return m, nil
+// 		}),
+// 	).Unwrap()
+// }
+
+// func (c *Client) LoadBalancing(serviceName string) (string, error) {
+// 	loadbalancer, ok := c.serviceUrlLbs[serviceName]
+// 	if !ok {
+// 		loadbalancer = lb.NewRoundRobinLB(c.RefreshServiceUrls(serviceName), time.Minute)
+// 		c.serviceUrlLbs[serviceName] = loadbalancer
+// 	}
+// 	return loadbalancer.Get()
+// }
+
+// func (c *Client) GetClient(serviceName string) (error) {
+// 	client, exist := c.serviceClients.Clone().ExistGet(serviceName)
+// 	if !exist {
+// 		// Create a route Filter: filter instances with version number "2.0.0"
+// 		filters := filter.Version("2.0.0")
+// 		filter.Version
+// 		// Create P2C load balancing algorithm Selector, and inject routing Filter
+// 		client, err := http.NewClient(
+// 			context.Background(),
+// 			http.WithNodeFilter(filters),
+// 			http.WithEndpoint(fmt.Sprintf("discovery:///%s", serviceName)),
+// 			http.WithDiscovery(c.Discovery),
+// 		)
+// 	}
+// }

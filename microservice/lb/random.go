@@ -3,17 +3,17 @@ package lb
 import (
 	"math/rand"
 	"time"
-)
 
+	"github.com/hoquangnam45/pharmacy-common-go/util/log"
+)
 
 type RandomLB[T comparable] struct {
 	*baseLB[T]
-	LoadBalancer[T]
 }
 
-func NewRandomLB[T comparable](elementFetcher ElementFetcher[T], ttl time.Duration) *RandomLB[T] {
+func NewRandomLB[T comparable](elementFetcher ElementFetcher[T], ttl time.Duration, logger log.Logger) LoadBalancer[T] {
 	return &RandomLB[T]{
-		baseLB: NewBaseLb(elementFetcher, ttl),
+		baseLB: NewBaseLb(elementFetcher, ttl, logger),
 	}
 }
 

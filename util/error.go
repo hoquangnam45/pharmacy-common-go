@@ -5,7 +5,7 @@ type GroupError struct {
 	Group error
 }
 
-func NewGroupError(cause error, group error) *GroupError {
+func NewGroupError(group error, cause error) *GroupError {
 	return &GroupError{
 		Cause: cause,
 		Group: group,
@@ -13,9 +13,9 @@ func NewGroupError(cause error, group error) *GroupError {
 }
 
 func (e *GroupError) Unwrap() error {
-	return e.Group
+	return e.Cause
 }
 
 func (e *GroupError) Error() string {
-	return e.Group.Error()
+	return e.Cause.Error()
 }

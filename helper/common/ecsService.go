@@ -6,11 +6,14 @@ import (
 
 	"github.com/hoquangnam45/pharmacy-common-go/helper/ecs"
 	"github.com/hoquangnam45/pharmacy-common-go/util"
+	"github.com/hoquangnam45/pharmacy-common-go/util/dns"
 	h "github.com/hoquangnam45/pharmacy-common-go/util/errorHandler"
+	"github.com/hoquangnam45/pharmacy-common-go/util/log"
 )
 
-func InitializeEcsService(servicePorts ...int) (string, map[int]int, string) {
+func InitializeEcsService(logger log.Logger, servicePorts ...int) (string, map[int]int, string) {
 	advertiseIp := ""
+	ecs := ecs.NewEcs(logger, dns.NewDnsResolver(logger))
 	if ecsMetadataPath, ok := os.LookupEnv("ECS_CONTAINER_METADATA_FILE"); ok {
 		advertiseIp = h.Lift(ecs.GetAdvertiseIp)(ecsMetadataPath).RetryUntilSuccess(time.Second*20, time.Second*5).PanicEval()
 	} else if bindInterface_, ok := os.LookupEnv("CONSUL_BIND_INTERFACE"); ok {

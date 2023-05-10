@@ -106,3 +106,9 @@ func (m *MaybeError[T]) EvalWithContext(ctx context.Context) (T, error) {
 		return noop, ctx.Err()
 	}
 }
+
+func (m *MaybeError[T]) BindWithContext(ctx context.Context) *MaybeError[T] {
+	return FactoryM(func() (T, error) {
+		return m.EvalWithContext(ctx)
+	})
+}

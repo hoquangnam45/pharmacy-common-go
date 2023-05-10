@@ -7,11 +7,21 @@ import (
 
 	"github.com/hoquangnam45/pharmacy-common-go/util/dns"
 	h "github.com/hoquangnam45/pharmacy-common-go/util/errorHandler"
+	"github.com/hoquangnam45/pharmacy-common-go/util/log"
 )
 
-func GetAdvertiseIp(ecsMetadataPath string) (string, error) {
+type Ecs struct {
+	logger      log.Logger
+	dnsResolver *dns.DnsResolver
+}
+
+func NewEcs(logger log.Logger, dnsResolver *dns.DnsResolver) *Ecs {
+	return &Ecs{logger: logger, dnsResolver: dnsResolver}
+}
+
+func (e *Ecs) GetAdvertiseIp(ecsMetadataPath string) (string, error) {
 	if ecsMetadataPath != "" {
-		containerInfo, err := h.Lift(GetContainerInfo)(ecsMetadataPath).Eval()
+		containerInfo, err := h.Lift(e.GetContainerInfo)(ecsMetadataPath).Eval()
 		if err != nil {
 			return "", err
 		}
@@ -20,9 +30,9 @@ func GetAdvertiseIp(ecsMetadataPath string) (string, error) {
 	return "", errors.New("missing ecs metadata path")
 }
 
-func GetAdvertisePort(ecsMetadataPath string, containerPort int) (int, error) {
+func (e *Ecs) GetAdvertisePort(ecsMetadataPath string, containerPort int) (int, error) {
 	if ecsMetadataPath != "" {
-		containerInfo, err := h.Lift(GetContainerInfo)(ecsMetadataPath).Eval()
+		containerInfo, err := h.Lift(e.GetContainerInfo)(ecsMetadataPath).Eval()
 		if err != nil {
 			return 0, err
 		}
@@ -34,16 +44,16 @@ func GetAdvertisePort(ecsMetadataPath string, containerPort int) (int, error) {
 	return 0, errors.New("missing ecs metadata path")
 }
 
-func ResolveHostModeService(ctx context.Context, srvUrl string) (map[string]bool, error) {
+func (e *Ecs) ResolveHostModeService(ctx context.Context, srvUrl string) (map[string]bool, error) {
 	return h.FlatMap(
 		h.FactoryM(func() (map[string]bool, error) {
-			return dns.ResolveSrvDns(ctx, srvUrl)
+			return e.dnsResolver.ResolveSrvDns(ctx, srvUrl)
 		}),
 		h.Lift(func(m map[string]bool) (map[string]bool, error) {
 			newMap := map[string]bool{}
 			for k := range m {
 				parts := strings.Split(k, ":")
-				resolvedAddrs, err := dns.ResolveADns(ctx, parts[0])
+				resolvedAddrs, err := e.dnsResolver.ResolveADns(ctx, parts[0])
 				if err != nil {
 					return nil, err
 				}

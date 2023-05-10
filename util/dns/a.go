@@ -10,11 +10,11 @@ import (
 	"go.uber.org/zap"
 )
 
-func ResolveADns(ctx context.Context, link string) (map[string]bool, error) {
+func (r *DnsResolver) ResolveADns(ctx context.Context, link string) (map[string]bool, error) {
 	return h.FlatMap2(
 		h.Just(link),
 		h.Lift(func(host string) ([]net.IP, error) {
-			util.SugaredLogger.Infof("Start lookingup host %s", host)
+			r.logger.Info("Start lookingup host %s", host)
 			addrs, err := net.LookupIP(host)
 			if err != nil {
 				return nil, err
@@ -27,7 +27,7 @@ func ResolveADns(ctx context.Context, link string) (map[string]bool, error) {
 				resolvedAddr := v.String()
 				resolvedAddrs[resolvedAddr] = true
 			}
-			util.Logger.Info(fmt.Sprintf("Found %d records", len(addrs)),
+			r.logger.Info(fmt.Sprintf("Found %d records", len(addrs)),
 				zap.Strings("records", util.SetToList(resolvedAddrs)),
 			)
 			return resolvedAddrs, nil

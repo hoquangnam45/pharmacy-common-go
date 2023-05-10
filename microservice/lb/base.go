@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/hoquangnam45/pharmacy-common-go/util"
+	"github.com/hoquangnam45/pharmacy-common-go/util/log"
 )
 
 var ErrorNeedRefresh = errors.New("reach expire ttl")
@@ -15,6 +16,8 @@ type ElementFetcher[T comparable] func() (map[T]bool, error)
 type LoadBalancer[T comparable] interface {
 	LoadBalancing() (T, error)
 	Get() (T, error)
+	CheckRefresh() error
+	Remove(T) bool
 }
 
 type baseLB[T comparable] struct {
@@ -23,9 +26,10 @@ type baseLB[T comparable] struct {
 	activeTime     time.Time
 	positionMap    map[T]int
 	elementFetcher ElementFetcher[T]
+	logger         log.Logger
 }
 
-func NewBaseLb[T comparable](elementFetcher ElementFetcher[T], ttl time.Duration) *baseLB[T] {
+func NewBaseLb[T comparable](elementFetcher ElementFetcher[T], ttl time.Duration, logger log.Logger) *baseLB[T] {
 	return &baseLB[T]{
 		elementFetcher: elementFetcher,
 		ttl:            ttl,
@@ -64,14 +68,14 @@ func (l *baseLB[T]) CheckRefresh() error {
 	return nil
 }
 
-func (l *baseLB[T]) Remove(val T) (int, bool) {
+func (l *baseLB[T]) Remove(val T) bool {
 	if idx, ok := l.positionMap[val]; ok {
-		util.SugaredLogger.Infof("Delete from LB at index %d  for lengths %d", idx, len(l.elements))
+		l.logger.Info("Delete from LB at index %d  for lengths %d", idx, len(l.elements))
 		l.elements = util.RemoveIndex(l.elements, idx)
 		delete(l.positionMap, val)
-		return idx, true
+		return true
 	}
-	return 0, false
+	return false
 }
 
 func (l *baseLB[T]) Add(val T) {

@@ -4,16 +4,15 @@ import (
 	"errors"
 
 	"github.com/hashicorp/consul/api"
-	"github.com/hoquangnam45/pharmacy-common-go/util"
 )
 
 type KVClient struct {
 	*api.KV
 }
 
-func NewKvClient(c *Client) *KVClient {
+func NewKvClient(c *api.Client) *KVClient {
 	return &KVClient{
-		c.client.KV(),
+		c.KV(),
 	}
 }
 
@@ -32,7 +31,6 @@ func (c *KVClient) GetKV(key string) (string, error) {
 		return "", err
 	}
 	if p == nil {
-		util.SugaredLogger.Infof("key %s in consul not exist", key)
 		return "", errors.New("key does not exist")
 	}
 	return string(p.Value), nil
